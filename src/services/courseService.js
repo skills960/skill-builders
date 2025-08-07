@@ -1,0 +1,547 @@
+const { logger } = require("../../logger");
+const { createCourseContent } = require("../mediators/courseMediator");
+const { uploadOnS3 } = require("../mediators/instructorMediator");
+const {
+  createCourse,
+  findAllCourses,
+  coursesRatingFunc,
+  fetchCourseWithDetailsWithId,
+  fetchAllRecentCourses,
+  findOneCourse,
+  updateCourse,
+  updateCourseByFilter,
+  setCourseStatusRepository,
+  findOneCourseWithStudentID,
+  findAllStudentCourses,
+  findTopSellingCourses,
+} = require("../repositories/courseRepository");
+const { getAllReviews } = require("../repositories/courseReviewRepository.js");
+const { saveReview } = require("../repositories/courseReviewRepository.js");
+const { google } = require("googleapis");
+const { oauth2Client } = require("../../Infrastructure/youtubeConfig");
+const fs = require("fs");
+const dataSource = require("../../Infrastructure/postgres.js");
+const studentVideoProgress = dataSource.getRepository("student_video_progress");
+
+const createCourseWithDetails = async (requestedData) => {
+  try {
+    const {
+      instructor_id,
+      title,
+      learning_outcomes,
+      category,
+      modulesCount,
+      amount,
+      image,
+      level,
+      description,
+      video_url,
+      skills,
+    } = requestedData;
+    console.log(requestedData)
+    const courseBasicsPayload = {
+      instructor_id,
+      title,
+      //creation_duration_hours,
+      learning_outcomes,
+      category,
+      modulesCount,
+      amount,
+      level,
+      description,
+      video_url,
+      discount: requestedData?.discount,
+      charges: amount * 0.03,
+      image,
+      skills,
+      created_at: new Date(),
+    };
+    let courseBasics = await createCourse(courseBasicsPayload);
+    console.log("courseBasics: ", courseBasics);
+    return courseBasics;
+    // await createCourseContent(modules, courseBasics.id);
+  } catch (error) {
+    logger.error("src > services > courseService > error");
+    logger.error(error);
+    throw new Error(error);
+  }
+};
+
+const setCourseStatusService = async ({
+  course_id,
+  status,
+  reason,
+  status_desc,
+}) => {
+  try {
+    const result = await findOneCourse(course_id);
+    if (result?.id) {
+      const declineResult = await setCourseStatusRepository(
+        course_id,
+        status,
+        reason,
+        status_desc
+      );
+      console.log("[RESULT OF DECLINING]:", declineResult);
+      return {
+        message: declineResult,
+        status: 200,
+      };
+    } else {
+      console.log("[COURSE NOT FOUND]");
+      return {
+        message: "[COURSE NOT FOUND]",
+        status: 400,
+      };
+    }
+  } catch (err) {
+    console.log("[SOME ERROR OCCURED WHILE DECLINING]:", err);
+    return {
+      message: "[SOME ERROR OCCURED WHILE DECLINING]",
+      status: 500,
+    };
+  }
+};
+
+const isCoursePurchasedService = async ({ course_id, student_id }) => {
+  try {
+    const purchasedCourse = dataSource.getRepository("purchased_course");
+    const isPurchased = await purchasedCourse.findOne({
+      where: {
+        course_id,
+        purchased_by: student_id,
+      },
+    });
+
+    if (isPurchased) {
+      return {
+        status: 200,
+        message: "You already have purchased this course",
+        data: {
+          is_purchased: true,
+        },
+      };
+    }
+
+    return {
+      status: 404,
+      message: "You have not purchased this course",
+      data: {
+        is_purchased: false,
+      },
+    };
+  } catch (e) {
+    return {
+      status: 500,
+      message: e.message,
+    };
+  }
+};
+
+const uploadVideoToYT = async (courseId, videoFilePath) => {
+  try {
+    const youtube = google.youtube({
+      version: "v3",
+      auth: oauth2Client,
+    });
+
+    const response = await youtube.videos.insert({
+      part: "snippet,status",
+      requestBody: {
+        snippet: {
+          title: "Instructor Introduction",
+          description:
+            "Describes about what course is all about, details about what you will learn in this course!",
+          tags: ["education"],
+          categoryId: "27",
+        },
+        status: {
+          privacyStatus: "private",
+        },
+      },
+      media: {
+        body: fs.createReadStream(videoFilePath),
+      },
+      mediaType: "video/*",
+    });
+
+    const videoId = response?.data?.id;
+    const videoUrl = `https://www.youtube.com/embed/${videoId}`;
+
+    return {
+      message: "The introductory video has been successfully posted.",
+      video_url: videoUrl,
+    };
+  } catch (e) {
+    console.log("ERR while uploading:", e);
+    return e;
+  }
+};
+
+const enrollInCourse = () => {
+  try {
+  } catch (err) {
+    console.log("Error ");
+  }
+};
+
+const getAllCourses = async () => {
+  try {
+    logger.info("src > services > getAllCourses");
+    const CoursesReceive = await findAllCourses();
+    console.log(CoursesReceive);
+    return CoursesReceive;
+  } catch (error) {
+    return error;
+  }
+};
+
+const getAllStudentCourses = async () => {
+  try {
+    logger.info("src > services > getAllCourses");
+    const CoursesReceive = await findAllStudentCourses();
+    console.log(CoursesReceive);
+    return CoursesReceive;
+  } catch (error) {
+    return error;
+  }
+};
+
+const getTopSellingCoursesService = async () => {
+  try {
+    logger.info("src > services > getAllCourses");
+    const CoursesReceive = await findTopSellingCourses();
+    console.log(CoursesReceive);
+    return CoursesReceive;
+  } catch (error) {
+    return error;
+  }
+};
+
+const uploadCourseVideoToYT = async (courseId, videoFilePath, user_role) => {
+  try {
+    // const youtube = google.youtube({
+    //   version: "v3",
+    //   auth: oauth2Client,
+    // });
+
+    // console.log("video file path in service:", videoFilePath);
+
+    // const response = await youtube.videos.insert({
+    //   part: "snippet,status",
+    //   requestBody: {
+    //     snippet: {
+    //       title: "Course Introductory Video",
+    //       description:
+    //         "Describes about what course is all about, share details about course with you!",
+    //       tags: ["education"],
+    //       categoryId: "27",
+    //     },
+    //     status: {
+    //       privacyStatus: "unlisted",
+    //     },
+    //   },
+    //   media: {
+    //     body: fs.createReadStream(videoFilePath),
+    //   },
+    //   mediaType: "video/*",
+    // });
+
+    // console.log("youtube repsonse:", response);
+
+    // const videoId = response?.data?.id;
+    // const videoUrl = `https://www.youtube.com/embed/${videoId}`;
+
+    const updatedCourse = await updateCourse(courseId, videoFilePath);
+    console.log("course", updatedCourse);
+    return {
+      status: 200,
+      message: "The introductory video has been successfully posted.",
+    };
+  } catch (e) {
+    console.log("ERR while uploading:", e);
+    return {
+      status: 500,
+      message: e.message,
+    };
+  }
+};
+
+const courseGetById = async (id) => {
+  try {
+    const filter = "id"; // Assuming 'id' is the filter key
+
+    // Pass both filter and id as course_id to findOneCourse
+    //const result = await findOneCourse(filter, id);
+    const result = await findOneCourseWithStudentID(id);
+
+    if (!result) {
+      console.log("Course not found");
+      throw new Error("Course not found");
+    }
+
+    return result;
+  } catch (error) {
+    logger.error("src > services > courseService");
+    logger.error(error);
+    throw new Error(error.message);
+  }
+};
+
+const coursesRatingService = async () => {
+  logger.info("src > services > coursesRatingService");
+  try {
+    const CoursesRatingReceive = await coursesRatingFunc();
+
+    return CoursesRatingReceive;
+  } catch (error) {
+    return error;
+  }
+};
+
+const coursesDetailFunc = async (id) => {
+  logger.info("Src > Services > coursesDetailFunc");
+  try {
+    const coursesDetailSave = await fetchCourseWithDetailsWithId(id);
+    return coursesDetailSave;
+  } catch (error) {
+    return error;
+  }
+};
+
+const recentCoursesFunc = async () => {
+  logger.info("src > Services > recentCoursesFunc");
+  try {
+    const recentCoursesSave = await fetchAllRecentCourses();
+    return recentCoursesSave;
+  } catch (error) {
+    return error;
+  }
+};
+
+const postReviewService = async (data) => {
+  try {
+    const postReview = await saveReview(data);
+    return postReview;
+  } catch (e) {
+    console.log("ERR:", e);
+  }
+};
+
+const getReviewsService = async (id) => {
+  try {
+    const getReviews = await getAllReviews(id);
+    return getReviews;
+  } catch (e) {
+    console.log("ERR:", e);
+  }
+};
+
+const updateCoursePropertiesService = async ({ course_id, filter, value }) => {
+  try {
+    const check = await findOneCourse({
+      id: course_id,
+    });
+    console.log("[COURSE FOUND]:", check);
+    if (check) {
+      const result = await updateCourseByFilter(course_id, filter, value);
+      console.log("[UPDATED COURSE ENTRY]:", result);
+      return {
+        message: result,
+        status: 200,
+      };
+    } else {
+      console.log(
+        "[ERR]:, Either there is no such course or it no longer exists."
+      );
+      return {
+        message: "Either there is no such course or it no longer exists.",
+        status: 400,
+      };
+    }
+  } catch (err) {
+    console.log("ERR:", err);
+    return {
+      message: `Couldn't update the course due to an error: ${err}`,
+      status: 500,
+    };
+  }
+};
+
+const saveProgressService = async (req) => {
+  //try{
+  const { course_content_id, user_id, is_completed } = req?.body;
+  const isProgressExists = await studentVideoProgress.findOne({
+    where: {
+      course_content_id,
+      user_id,
+    },
+  });
+
+  if (!isProgressExists) {
+    const s = studentVideoProgress.create({
+      course_content_id,
+      user_id,
+      is_completed,
+    });
+    await studentVideoProgress.save(s);
+  } else {
+    await studentVideoProgress.update(
+      { course_content_id, user_id },
+      { is_completed }
+    );
+  }
+  return {
+    status: 200,
+    message: "progress saved",
+  };
+  // }catch(e){
+  //   console.log(e)
+  //   return {
+  //     status: 500,
+  //     message: e.message
+  //   }
+  // }
+};
+
+const getSavedModuleProgressService = async (req) => {
+  //try{
+  const { module_id, user_id } = req?.query;
+  const isProgressExists = await studentVideoProgress.findOne({
+    where: {
+      //course_content_id,
+      user_id,
+    },
+  });
+
+  let progress = null;
+  const course_contents = [];
+  let total_videos = 0;
+  let completed_videos = 0;
+
+  if (!isProgressExists) {
+    return {
+      status: 404,
+      message: "progress of student not found",
+    };
+  } else {
+    // await studentVideoProgress.update(
+    //   { course_content_id, user_id },
+    //   { is_completed }
+    // );
+    progress = await dataSource
+      .getRepository("student_video_progress")
+      .createQueryBuilder("student_progress")
+      .leftJoinAndSelect("student_progress.course_content", "course_content")
+      .where("student_progress.user_id = :user_id", { user_id })
+      .andWhere("student_progress.course_content_id=course_content.id")
+      .andWhere("course_content.module_id = :module_id", { module_id })
+      .getMany();
+
+    for (let p of progress) {
+      total_videos++;
+      if (p?.is_completed === true) {
+        completed_videos++;
+      }
+      if (
+        p?.course_content !== null &&
+        p?.course_content?.module_id == module_id
+      ) {
+        console.log(p);
+        course_contents.push(p?.course_content);
+      }
+    }
+  }
+  return {
+    status: 200,
+    message: "Fetched saved progress",
+    data: {
+      course_contents,
+      completed_percentage_module: (completed_videos / total_videos) * 100,
+    },
+  };
+  // }catch(e){
+  //   console.log(e)
+  //   return {
+  //     status: 500,
+  //     message: e.message
+  //   }
+  // }
+};
+
+const completionCoursePercentageService = async (user_id, course_id) => {
+  // Check if there is progress for the user
+  const isProgressExists = await studentVideoProgress.findOne({
+    where: { user_id },
+  });
+
+  if (!isProgressExists) {
+    return {
+      status: 404,
+      message: "Progress of student not found",
+    };
+  }
+
+  // Fetch video progress for the specified course_id
+  const progress = await dataSource
+    .getRepository("student_video_progress")
+    .createQueryBuilder("student_progress")
+    .where("student_progress.user_id = :user_id", { user_id })
+    .innerJoin(
+      "student_progress.course_content",
+      "course_content",
+      "student_progress.course_content_id = course_content.id"
+    )
+    .innerJoin(
+      "course_content.modules",
+      "modules",
+      "course_content.module_id = modules.id"
+    )
+    .innerJoin(
+      "modules.course",
+      "course",
+      "modules.course_id = course.id and modules.course_id= :course_id",{course_id}
+    )
+    .select()
+    .getMany();
+
+    let total_course_videos= progress.length;
+    let completed_course_videos= 0;
+
+  for(let p of progress){
+    if(p?.is_completed===true){
+      completed_course_videos++;
+    }
+  }
+
+  //calculate percentage of the course completion
+  const completion_percentage= (completed_course_videos/total_course_videos)*100
+
+  return {
+    status: 200,
+    message: "Fetched saved progress",
+    completion: completion_percentage,
+  };
+};
+
+
+module.exports = {
+  createCourseWithDetails,
+  getAllCourses,
+  courseGetById,
+  coursesRatingService,
+  coursesDetailFunc,
+  recentCoursesFunc,
+  postReviewService,
+  getReviewsService,
+  uploadCourseVideoToYT,
+  uploadVideoToYT,
+  updateCoursePropertiesService,
+  setCourseStatusService,
+  getAllStudentCourses,
+  isCoursePurchasedService,
+  saveProgressService,
+  getSavedModuleProgressService,
+  completionCoursePercentageService,
+  getTopSellingCoursesService
+};
