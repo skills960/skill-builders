@@ -5,7 +5,7 @@ const { default: fastifySecureSession } = require("@fastify/secure-session");
 const fs = require("fs");
 const path = require("path");
 const fastifyPassport = require("@fastify/passport");
-const dataSource = require("../Infrastructure/postgres");
+const { getDataSource } = require("../Infrastructure/postgres");
 const { logger } = require("../logger");
 const { fastifyOptions } = require("../fastifyOpts");
 const userRoutes = require("./routes/userRoutes");
@@ -131,25 +131,27 @@ const startServer = async (noListen = false) => {
 
   if (noListen) {
     // For Lambda: don't listen, just return the app
+    // Initialize database connection for Lambda
+    try {
+      await getDataSource();
+      logger.info("Database connection initialized for Lambda");
+    } catch (error) {
+      logger.error("Failed to initialize database for Lambda:", error);
+      // Don't throw error in Lambda, let it handle gracefully
+    }
     return app;
   }
 
   try {
-    await dataSource
-      .initialize()
-      .then(async (conn) => {
-        logger.info("Database connection has beed established ...");
-        console.log("variable testing>", process.env.S3_URL);
-        await app.listen(process.env.SERVER_PORT, "0.0.0.0", (err) => {
-          err ? logger.error(err) : "";
-          logger.info(
-            `Server is Listening on port ${process.env.SERVER_PORT} and environment is ${process.env.NODE_ENV}`
-          );
-        });
-      })
-      .catch((error) => {
-        logger.error(error);
-      });
+    const dataSource = await getDataSource();
+    logger.info("Database connection has been established ...");
+    console.log("variable testing>", process.env.S3_URL);
+    await app.listen(process.env.SERVER_PORT || 3000, "0.0.0.0", (err) => {
+      err ? logger.error(err) : "";
+      logger.info(
+        `Server is Listening on port ${process.env.SERVER_PORT || 3000} and environment is ${process.env.NODE_ENV}`
+      );
+    });
   } catch (error) {
     logger.error(error.message);
     process.exit(1);

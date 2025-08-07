@@ -4,17 +4,43 @@ provider:
   name: aws
   runtime: nodejs18.x
   region: us-east-1
+  environment:
+    NODE_ENV: production
+  httpApi:
+    cors:
+      allowedOrigins:
+        - "*"
+      allowedHeaders:
+        - Content-Type
+        - X-Amz-Date
+        - Authorization
+        - X-Api-Key
+        - X-Amz-Security-Token
+        - X-Amz-User-Agent
+      allowedMethods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - PATCH
+        - OPTIONS
+      allowCredentials: false
 
 functions:
   app:
-    handler: src/handler.main
+    handler: src/index.handler
+    timeout: 30
+    memorySize: 512
     events:
-      - http:
+      - httpApi:
           path: /
           method: ANY
-      - http:
+      - httpApi:
           path: /{proxy+}
           method: ANY
+
+plugins:
+  - serverless-dotenv-plugin
 
 package:
   exclude:
@@ -22,3 +48,7 @@ package:
     - .git/**
     - tests/**
     - README.md
+    - .env*
+    - docker-compose.yml
+    - uploads/**
+    - media/**
